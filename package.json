@@ -1,0 +1,37 @@
+{
+    "name": "core-evm",
+    "version": "0.1.0",
+    "main": "index.js",
+    "description": "Core EVM smart-contracts of Cetra 🧙‍♀️✨",
+    "repository": "https://github.com/cetra-finance/core-evm",
+    "author": "Cetra Developers <https://cetra.finance/>",
+    "license": "MIT",
+    "private": false,
+    "scripts": {
+        "fmt:fix": "yarn prettier --write .",
+        "fmt:check": "yarn prettier --check .",
+        "test": "yarn hardhat test"
+    },
+    "devDependencies": {
+        "@ethersproject/providers": "^5.4.7",
+        "@nomicfoundation/hardhat-chai-matchers": "^1.0.0",
+        "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+        "@nomicfoundation/hardhat-toolbox": "^2.0.2",
+        "@nomiclabs/hardhat-ethers": "^2.0.0",
+        "@nomiclabs/hardhat-etherscan": "^3.0.0",
+        "@typechain/ethers-v5": "^10.1.0",
+        "@typechain/hardhat": "^6.1.2",
+        "@types/chai": "^4.3.4",
+        "@types/mocha": "^10.0.1",
+        "@types/node": "^18.15.10",
+        "chai": "^4.3.7",
+        "ethers": "^5.4.7",
+        "hardhat": "^2.13.0",
+        "hardhat-gas-reporter": "^1.0.8",
+        "prettier": "^2.8.7",
+        "solidity-coverage": "^0.8.1",
+        "ts-node": "^10.9.1",
+        "typechain": "^8.1.0",
+        "typescript": "^5.0.2"
+    }
+}

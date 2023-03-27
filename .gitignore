@@ -1,0 +1,13 @@
+# Env
+node_modules/
+.DS_Store
+.env
+.env.*
+coverage
+coverage.json
+typechain
+typechain-types
+
+# Hardhat files
+cache/
+artifacts/
