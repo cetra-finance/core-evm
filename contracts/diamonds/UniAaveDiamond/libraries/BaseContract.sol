@@ -16,4 +16,11 @@ abstract contract BaseContract {
 		_;
 	}
 
+	modifier lock() {
+        require(getState().unlocked, "LOK");
+        getState().unlocked = false;
+        _;
+        getState().unlocked = true;
+    } 
+
 }
