@@ -5,6 +5,7 @@ import "./LibDiamond.sol";
 import "./AppStorage.sol";
 
 abstract contract BaseContract {
+
 	function getState()
 		internal pure returns (AppStorage.State storage s)
 	{

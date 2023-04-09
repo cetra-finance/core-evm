@@ -2,14 +2,27 @@
 pragma solidity >=0.8.0;
 pragma abicoder v2;
 
-import "../../libraries/AppStorage.sol";
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
+import "../innerInterfaces/UniFacet.sol";
+import "../innerInterfaces/AaveFacet.sol";
+import "../innerInterfaces/HelperFacet.sol";
+
+import "../../libraries/Constants.sol";
+
 contract burnFacet is
-    AppStorage,
     BaseContract
 {
+
+    // =================================
+    // Errors
+    // =================================
+
+    error ChamberV1__SwappedUsdcForToken0StillCantRepay();
+    error ChamberV1__UserRepaidMoreEthThanOwned();
+    error ChamberV1__UserRepaidMoreMaticThanOwned();
+    error ChamberV1__SwappedToken0ForToken1StillCantRepay();
 
     // =================================
     // Main funcitons
@@ -17,18 +30,17 @@ contract burnFacet is
 
     function burn(uint256 _shares) external lock {
         uint256 usdcBalanceBefore = TransferHelper.safeGetBalance(
-            i_usdcAddress,
-            address(this)
+            getState().i_usdcAddress
         );
         _burn(_shares);
 
-        s_totalShares -= _shares;
-        s_userShares[msg.sender] -= _shares;
+        getState().s_totalShares -= _shares;
+        getState().s_userShares[msg.sender] -= _shares;
 
         TransferHelper.safeTransfer(
-            i_usdcAddress,
+            getState().i_usdcAddress,
             msg.sender,
-            TransferHelper.safeGetBalance(i_usdcAddress, address(this)) -
+            TransferHelper.safeGetBalance(getState().i_usdcAddress) -
                 usdcBalanceBefore
         );
     }
@@ -39,34 +51,34 @@ contract burnFacet is
 
     function _burn(uint256 _shares) private {
         (
-            uint256 burnWMATIC,
-            uint256 burnWETH,
-            uint256 feeWmatic,
-            uint256 feeWeth
-        ) = _withdraw(uint128((getLiquidity() * _shares) / s_totalShares));
-        _applyFees(feeWmatic, feeWeth);
+            uint256 burnToken1,
+            uint256 burnToken0,
+            uint256 feeToken1,
+            uint256 feeToken0
+        ) = _withdraw(uint128((IUniFacet(address(this)).getLiquidity() * _shares) / getState().s_totalShares));
+        _applyFees(feeToken1, feeToken0);
 
-        uint256 amountWmatic = burnWMATIC +
-            ((TransferHelper.safeGetBalance(i_wmaticAddress, address(this)) -
-                burnWMATIC -
-                s_cetraFeeWmatic) * _shares) /
-            s_totalShares;
-        uint256 amountWeth = burnWETH +
-            ((TransferHelper.safeGetBalance(i_wethAddress, address(this)) -
-                burnWETH -
-                s_cetraFeeWeth) * _shares) /
-            s_totalShares;
+        uint256 amountToken1 = burnToken1 +
+            ((TransferHelper.safeGetBalance(getState().i_token1Address) -
+                burnToken1 -
+                getState().s_cetraFeeToken1) * _shares) /
+            getState().s_totalShares;
+        uint256 amountToken0 = burnToken0 +
+            ((TransferHelper.safeGetBalance(getState().i_token0Address) -
+                burnToken0 -
+                getState().s_cetraFeeToken0) * _shares) /
+            getState().s_totalShares;
 
         {
             (
-                uint256 wmaticRemainder,
-                uint256 wethRemainder
-            ) = _repayAndWithdraw(_shares, amountWmatic, amountWeth);
-            if (wmaticRemainder > 0) {
-                swapExactAssetToStable(i_wmaticAddress, wmaticRemainder);
+                uint256 token1Remainder,
+                uint256 token0Remainder
+            ) = _repayAndWithdraw(_shares, amountToken1, amountToken0);
+            if (token1Remainder > 0) {
+                swapExactAssetToStable(getState().i_token1Address, token1Remainder);
             }
-            if (wethRemainder > 0) {
-                swapExactAssetToStable(i_wethAddress, wethRemainder);
+            if (token0Remainder > 0) {
+                swapExactAssetToStable(getState().i_token0Address, token0Remainder);
             }
         }
     }
@@ -77,119 +89,115 @@ contract burnFacet is
 
     function _repayAndWithdraw(
         uint256 _shares,
-        uint256 wmaticOwnedByUser,
-        uint256 wethOwnedByUser
+        uint256 token1OwnedByUser,
+        uint256 token0OwnedByUser
     ) private returns (uint256, uint256) {
-        uint256 wmaticDebtToCover = (getVWMATICTokenBalance() * _shares) /
-            s_totalShares;
-        uint256 wethDebtToCover = (getVWETHTokenBalance() * _shares) /
-            s_totalShares;
-        uint256 wmaticBalanceBefore = TransferHelper.safeGetBalance(
-            i_wmaticAddress,
-            address(this)
+        uint256 token1DebtToCover = (IAaveFacet(address(this)).getVToken1Balance() * _shares) /
+            getState().s_totalShares;
+        uint256 token0DebtToCover = (IAaveFacet(address(this)).getVToken0Balance() * _shares) /
+            getState().s_totalShares;
+        uint256 token1BalanceBefore = TransferHelper.safeGetBalance(
+            getState().i_token1Address
         );
-        uint256 wethBalanceBefore = TransferHelper.safeGetBalance(
-            i_wethAddress,
-            address(this)
+        uint256 token0BalanceBefore = TransferHelper.safeGetBalance(
+            getState().i_token0Address
         );
-        uint256 wmaticRemainder;
-        uint256 wethRemainder;
+        uint256 token1Remainder;
+        uint256 token0Remainder;
 
-        uint256 wethSwapped = 0;
+        uint256 token0Swapped = 0;
         uint256 usdcSwapped = 0;
 
-        uint256 _currentLTV = currentLTV();
-        if (wmaticOwnedByUser < wmaticDebtToCover) {
-            wethSwapped += swapAssetToExactAsset(
-                i_wethAddress,
-                i_wmaticAddress,
-                wmaticDebtToCover - wmaticOwnedByUser
+        uint256 _currentLTV = IHelperFacet(address(this)).currentLTV();
+        if (token1OwnedByUser < token1DebtToCover) {
+            token0Swapped += swapAssetToExactAsset(
+                getState().i_token0Address,
+                getState().i_token1Address,
+                token1DebtToCover - token1OwnedByUser
             );
             if (
-                wmaticOwnedByUser +
+                token1OwnedByUser +
                     TransferHelper.safeGetBalance(
-                        i_wmaticAddress,
-                        address(this)
+                        getState().i_token1Address
                     ) -
-                    wmaticBalanceBefore <
-                wmaticDebtToCover
+                    token1BalanceBefore <
+                token1DebtToCover
             ) {
-                revert ChamberV1__SwappedWethForWmaticStillCantRepay();
+                revert ChamberV1__SwappedToken0ForToken1StillCantRepay();
             }
         }
-        i_aaveV3Pool.repay(
-            i_wmaticAddress,
-            wmaticDebtToCover,
+        (getState().i_aaveV3Pool).repay(
+            getState().i_token1Address,
+            token1DebtToCover,
             2,
             address(this)
         );
         if (
-            TransferHelper.safeGetBalance(i_wmaticAddress, address(this)) >=
-            wmaticBalanceBefore - wmaticOwnedByUser
+            TransferHelper.safeGetBalance(getState().i_token1Address) >=
+            token1BalanceBefore - token1OwnedByUser
         ) {
-            wmaticRemainder =
-                TransferHelper.safeGetBalance(i_wmaticAddress, address(this)) +
-                wmaticOwnedByUser -
-                wmaticBalanceBefore;
+            token1Remainder =
+                TransferHelper.safeGetBalance(getState().i_token1Address) +
+                token1OwnedByUser -
+                token1BalanceBefore;
         } else {
             revert ChamberV1__UserRepaidMoreMaticThanOwned();
         }
 
-        i_aaveV3Pool.withdraw(
-            i_usdcAddress,
-            (((1e6 * wmaticDebtToCover * getWmaticOraclePrice()) /
-                getUsdcOraclePrice()) / _currentLTV),
+        (getState().i_aaveV3Pool).withdraw(
+            getState().i_usdcAddress,
+            (((1e6 * token1DebtToCover * IAaveFacet(address(this)).getToken1OraclePrice()) /
+                IAaveFacet(address(this)).getUsdcOraclePrice()) / _currentLTV),
             address(this)
         );
 
-        if (wethOwnedByUser < wethDebtToCover + wethSwapped) {
+        if (token0OwnedByUser < token0DebtToCover + token0Swapped) {
             usdcSwapped += swapStableToExactAsset(
-                i_wethAddress,
-                wethDebtToCover + wethSwapped - wethOwnedByUser
+                getState().i_token0Address,
+                token0DebtToCover + token0Swapped - token0OwnedByUser
             );
             if (
-                (wethOwnedByUser +
+                (token0OwnedByUser +
                     TransferHelper.safeGetBalance(
-                        i_wethAddress,
-                        address(this)
+                        getState().i_token0Address
                     )) -
-                    wethBalanceBefore <
-                wethDebtToCover
+                    token0BalanceBefore <
+                token0DebtToCover
             ) {
-                revert ChamberV1__SwappedUsdcForWethStillCantRepay();
+                revert ChamberV1__SwappedUsdcForToken0StillCantRepay();
             }
         }
-        i_aaveV3Pool.repay(i_wethAddress, wethDebtToCover, 2, address(this));
+        (getState().i_aaveV3Pool).repay(getState().i_token0Address, token0DebtToCover, 2, address(this));
 
         if (
-            TransferHelper.safeGetBalance(i_wethAddress, address(this)) >=
-            wethBalanceBefore - wethOwnedByUser
+            TransferHelper.safeGetBalance(getState().i_token0Address) >=
+            token0BalanceBefore - token0OwnedByUser
         ) {
-            wethRemainder =
-                TransferHelper.safeGetBalance(i_wethAddress, address(this)) +
-                wethOwnedByUser -
-                wethBalanceBefore;
+            token0Remainder =
+                TransferHelper.safeGetBalance(getState().i_token0Address) +
+                token0OwnedByUser -
+                token0BalanceBefore;
         } else {
             revert ChamberV1__UserRepaidMoreEthThanOwned();
         }
 
-        i_aaveV3Pool.withdraw(
-            i_usdcAddress,
-            (((1e6 * wethDebtToCover * getWethOraclePrice()) /
-                getUsdcOraclePrice()) / _currentLTV),
+        (getState().i_aaveV3Pool).withdraw(
+            getState().i_usdcAddress,
+            (((1e6 * token0DebtToCover * IAaveFacet(address(this)).getToken0OraclePrice()) /
+                IAaveFacet(address(this)).getUsdcOraclePrice()) / _currentLTV),
             address(this)
         );
 
-        return (wmaticRemainder, wethRemainder);
+        return (token1Remainder, token0Remainder);
     }
 
     function swapExactAssetToStable(
         address assetIn,
         uint256 amountIn
     ) private returns (uint256) {
-        uint256 amountOut = i_uniswapSwapRouter.exactInput(
+        uint256 amountOut = (getState().i_uniswapSwapRouter).exactInput(
             ISwapRouter.ExactInputParams({
-                path: abi.encodePacked(assetIn, uint24(500), i_usdcAddress),
+                path: abi.encodePacked(assetIn, uint24(500), getState().i_usdcAddress),
                 recipient: address(this),
                 deadline: block.timestamp,
                 amountIn: amountIn,
@@ -203,9 +211,9 @@ contract burnFacet is
         address assetOut,
         uint256 amountOut
     ) private returns (uint256) {
-        uint256 amountIn = i_uniswapSwapRouter.exactOutput(
+        uint256 amountIn = (getState().i_uniswapSwapRouter).exactOutput(
             ISwapRouter.ExactOutputParams({
-                path: abi.encodePacked(assetOut, uint24(500), i_usdcAddress),
+                path: abi.encodePacked(assetOut, uint24(500), getState().i_usdcAddress),
                 recipient: address(this),
                 deadline: block.timestamp,
                 amountOut: amountOut,
@@ -220,12 +228,12 @@ contract burnFacet is
         address assetOut,
         uint256 amountOut
     ) private returns (uint256) {
-        uint256 amountIn = i_uniswapSwapRouter.exactOutput(
+        uint256 amountIn = (getState().i_uniswapSwapRouter).exactOutput(
             ISwapRouter.ExactOutputParams({
                 path: abi.encodePacked(
                     assetOut,
                     uint24(500),
-                    i_usdcAddress,
+                    getState().i_usdcAddress,
                     uint24(500),
                     assetIn
                 ),
@@ -242,44 +250,40 @@ contract burnFacet is
     function _withdraw(
         uint128 liquidityToBurn
     ) private returns (uint256, uint256, uint256, uint256) {
-        uint256 preBalanceWmatic = TransferHelper.safeGetBalance(
-            i_wmaticAddress,
-            address(this)
+        uint256 preBalanceToken1 = TransferHelper.safeGetBalance(
+            getState().i_token1Address
         );
-        uint256 preBalanceWeth = TransferHelper.safeGetBalance(
-            i_wethAddress,
-            address(this)
+        uint256 preBalanceToken0 = TransferHelper.safeGetBalance(
+            getState().i_token0Address
         );
-        (uint256 burnWmatic, uint256 burnWeth) = i_uniswapPool.burn(
-            s_lowerTick,
-            s_upperTick,
+        (uint256 burnToken1, uint256 burnToken0) = (getState().i_uniswapPool).burn(
+            getState().s_lowerTick,
+            getState().s_upperTick,
             liquidityToBurn
         );
-        i_uniswapPool.collect(
+        (getState().i_uniswapPool).collect(
             address(this),
-            s_lowerTick,
-            s_upperTick,
+            getState().s_lowerTick,
+            getState().s_upperTick,
             type(uint128).max,
             type(uint128).max
         );
-        uint256 feeWmatic = TransferHelper.safeGetBalance(
-            i_wmaticAddress,
-            address(this)
+        uint256 feeToken1 = TransferHelper.safeGetBalance(
+            getState().i_token1Address
         ) -
-            preBalanceWmatic -
-            burnWmatic;
-        uint256 feeWeth = TransferHelper.safeGetBalance(
-            i_wethAddress,
-            address(this)
+            preBalanceToken1 -
+            burnToken1;
+        uint256 feeToken0 = TransferHelper.safeGetBalance(
+            getState().i_token0Address
         ) -
-            preBalanceWeth -
-            burnWeth;
-        return (burnWmatic, burnWeth, feeWmatic, feeWeth);
+            preBalanceToken0 -
+            burnToken0;
+        return (burnToken1, burnToken0, feeToken1, feeToken0);
     }
 
-    function _applyFees(uint256 _feeWmatic, uint256 _feeWeth) private {
-        s_cetraFeeWeth += (_feeWeth * CETRA_FEE) / PRECISION;
-        s_cetraFeeWmatic += (_feeWmatic * CETRA_FEE) / PRECISION;
+    function _applyFees(uint256 _feeToken1, uint256 _feeToken0) private {
+        getState().s_cetraFeeToken0 += (_feeToken0 * Constants.CETRA_FEE) / Constants.PRECISION;
+        getState().s_cetraFeeToken1 += (_feeToken1 * Constants.CETRA_FEE) / Constants.PRECISION;
     }
 
 }

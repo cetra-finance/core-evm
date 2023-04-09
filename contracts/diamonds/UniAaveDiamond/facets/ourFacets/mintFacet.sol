@@ -2,16 +2,28 @@
 pragma solidity >=0.8.0;
 pragma abicoder v2;
 
-import "../../libraries/AppStorage.sol";
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
-import "./Uniswap/utils/LiquidityAmounts.sol";
+import "../../libraries/uniLibraries/LiquidityAmounts.sol";
+import "../../libraries/uniLibraries/TickMath.sol";
+
+import "../innerInterfaces/RebalanceFacet.sol";
+import "../innerInterfaces/UniFacet.sol";
+import "../innerInterfaces/HelperFacet.sol";
+import "../innerInterfaces/AaveFacet.sol";
+
+import "../../libraries/Constants.sol";
 
 contract mintFacet is
-    AppStorage,
     BaseContract
 {
+
+    // =================================
+    // Errors
+    // =================================
+
+    error ChamberV1__sharesWorthMoreThenDep();
 
     // =================================
     // Main funcitons
@@ -19,17 +31,17 @@ contract mintFacet is
 
     function mint(uint256 usdAmount) external lock {
         {
-            uint256 currUsdBalance = currentUSDBalance();
+            uint256 currUsdBalance = IRebalanceFacet(address(this)).currentUSDBalance();
             uint256 sharesToMint = (currUsdBalance > 10)
-                ? ((usdAmount * s_totalShares) / (currUsdBalance))
+                ? ((usdAmount * getState().s_totalShares) / (currUsdBalance))
                 : usdAmount;
-            s_totalShares += sharesToMint;
-            s_userShares[msg.sender] += sharesToMint;
+            getState().s_totalShares += sharesToMint;
+            getState().s_userShares[msg.sender] += sharesToMint;
             if (sharesWorth(sharesToMint) >= usdAmount) {
                 revert ChamberV1__sharesWorthMoreThenDep();
             }
             TransferHelper.safeTransferFrom(
-                i_usdcAddress,
+                getState().i_usdcAddress,
                 msg.sender,
                 address(this),
                 usdAmount
@@ -47,62 +59,62 @@ contract mintFacet is
         uint256 amount1;
         uint256 usedLTV;
 
-        int24 currentTick = getTick();
+        int24 currentTick = IUniFacet(address(this)).getTick();
 
-        if (!s_liquidityTokenId) {
-            s_lowerTick = ((currentTick - 11000) / 10) * 10;
-            s_upperTick = ((currentTick + 11000) / 10) * 10;
-            usedLTV = s_targetLTV;
-            s_liquidityTokenId = true;
+        if (!getState().s_liquidityTokenId) {
+            getState().s_lowerTick = ((currentTick - 11000) / 10) * 10;
+            getState().s_upperTick = ((currentTick + 11000) / 10) * 10;
+            usedLTV = getState().s_targetLTV;
+            getState().s_liquidityTokenId = true;
         } else {
-            usedLTV = currentLTV();
+            usedLTV = IHelperFacet(address(this)).currentLTV();
         }
-        if (usedLTV < (10 * PRECISION) / 100) {
-            usedLTV = s_targetLTV;
+        if (usedLTV < (10 * Constants.PRECISION) / 100) {
+            usedLTV = getState().s_targetLTV;
         }
         (amount0, amount1) = calculatePoolReserves(uint128(1e18));
 
-        i_aaveV3Pool.supply(
-            i_usdcAddress,
-            TransferHelper.safeGetBalance(i_usdcAddress, address(this)),
+        (getState().i_aaveV3Pool).supply(
+            getState().i_usdcAddress,
+            TransferHelper.safeGetBalance(getState().i_usdcAddress),
             address(this),
             0
         );
 
-        uint256 usdcOraclePrice = getUsdcOraclePrice();
-        uint256 wmaticOraclePrice = getWmaticOraclePrice();
-        uint256 wethOraclePrice = getWethOraclePrice();
+        uint256 usdcOraclePrice = IAaveFacet(address(this)).getUsdcOraclePrice();
+        uint256 token1OraclePrice = IAaveFacet(address(this)).getToken1OraclePrice();
+        uint256 token0OraclePrice = IAaveFacet(address(this)).getToken0OraclePrice();
 
-        uint256 wethToBorrow = (usdAmount * usdcOraclePrice * usedLTV) /
-            ((wmaticOraclePrice * amount0) /
+        uint256 token0ToBorrow = (usdAmount * usdcOraclePrice * usedLTV) /
+            ((token1OraclePrice * amount0) /
                 amount1 /
                 1e12 +
-                wethOraclePrice /
+                token0OraclePrice /
                 1e12) /
-            PRECISION;
+            Constants.PRECISION;
 
-        uint256 wmaticToBorrow = (usdAmount * usdcOraclePrice * usedLTV) /
-            (wmaticOraclePrice /
+        uint256 token1ToBorrow = (usdAmount * usdcOraclePrice * usedLTV) /
+            (token1OraclePrice /
                 1e12 +
-                (wethOraclePrice * amount1) /
+                (token0OraclePrice * amount1) /
                 amount0 /
                 1e12) /
-            PRECISION;
+            Constants.PRECISION;
 
-        if (wmaticToBorrow > 0) {
-            i_aaveV3Pool.borrow(
-                i_wmaticAddress,
-                wmaticToBorrow,
+        if (token1ToBorrow > 0) {
+            (getState().i_aaveV3Pool).borrow(
+                getState().i_token1Address,
+                token1ToBorrow,
                 2,
                 0,
                 address(this)
             );
         }
 
-        if (wethToBorrow > 0) {
-            i_aaveV3Pool.borrow(
-                i_wethAddress,
-                wethToBorrow,
+        if (token0ToBorrow > 0) {
+            (getState().i_aaveV3Pool).borrow(
+                getState().i_token0Address,
+                token0ToBorrow,
                 2,
                 0,
                 address(this)
@@ -110,26 +122,25 @@ contract mintFacet is
         }
 
         {
-            uint256 wmaticRecieved = TransferHelper.safeGetBalance(
-                i_wmaticAddress,
-                address(this)
-            ) - s_cetraFeeWmatic;
-            uint256 wethRecieved = TransferHelper.safeGetBalance(
-                i_wethAddress,
-                address(this)
-            ) - s_cetraFeeWeth;
+            uint256 token1Recieved = TransferHelper.safeGetBalance(
+                getState().i_token1Address
+            ) - getState().s_cetraFeeToken1;
+            uint256 token0Recieved = TransferHelper.safeGetBalance(
+                getState().i_token0Address
+            ) - getState().s_cetraFeeToken0;
+
             uint128 liquidityMinted = LiquidityAmounts.getLiquidityForAmounts(
-                getSqrtRatioX96(),
-                TickMath.getSqrtRatioAtTick(s_lowerTick),
-                TickMath.getSqrtRatioAtTick(s_upperTick),
-                wmaticRecieved,
-                wethRecieved
+                IUniFacet(address(this)).getSqrtRatioX96(),
+                TickMath.getSqrtRatioAtTick(getState().s_lowerTick),
+                TickMath.getSqrtRatioAtTick(getState().s_upperTick),
+                token1Recieved,
+                token0Recieved
             );
 
-            i_uniswapPool.mint(
+            (getState().i_uniswapPool).mint(
                 address(this),
-                s_lowerTick,
-                s_upperTick,
+                getState().s_lowerTick,
+                getState().s_upperTick,
                 liquidityMinted,
                 ""
             );
@@ -140,18 +151,22 @@ contract mintFacet is
     // Private funcitons
     // =================================
 
+    function sharesWorth(uint256 shares) public view returns (uint256) {
+        return (IRebalanceFacet(address(this)).currentUSDBalance() * shares) / getState().s_totalShares;
+    }
+
     function calculatePoolReserves(
         uint128 liquidity
     ) private view returns (uint256, uint256) {
         uint256 amount0;
         uint256 amount1;
         (amount0, amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            getSqrtRatioX96(),
-            TickMath.getSqrtRatioAtTick(s_lowerTick),
-            TickMath.getSqrtRatioAtTick(s_upperTick),
+            IUniFacet(address(this)).getSqrtRatioX96(),
+            TickMath.getSqrtRatioAtTick(getState().s_lowerTick),
+            TickMath.getSqrtRatioAtTick(getState().s_upperTick),
             liquidity
         );
         return (amount0, amount1);
     }
-    
+
 }

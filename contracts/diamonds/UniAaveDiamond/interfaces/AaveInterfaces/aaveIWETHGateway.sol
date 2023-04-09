@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: agpl-3.0
 pragma solidity ^0.8.10;
 
-interface IWETHGateway {
+interface IToken0Gateway {
   function depositETH(
     address pool,
     address onBehalfOf,
     uint16 referralCode
   ) external payable;
 
-  function withdrawETH(
+  function withdrawToken0(
     address pool,
     uint256 amount,
     address onBehalfOf
@@ -21,14 +21,14 @@ interface IWETHGateway {
     address onBehalfOf
   ) external payable;
 
-  function borrowETH(
+  function borrowToken0(
     address pool,
     uint256 amount,
     uint256 interesRateMode,
     uint16 referralCode
   ) external;
 
-  function withdrawETHWithPermit(
+  function withdrawWithPermit(
     address pool,
     uint256 amount,
     address to,

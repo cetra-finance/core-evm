@@ -33,7 +33,7 @@ interface IInitializableDebtToken {
     /**
      * @notice Initializes the debt token.
      * @param pool The pool contract that is initializing this contract
-     * @param underlyingAsset The address of the underlying asset of this aToken (E.g. WETH for aWETH)
+     * @param underlyingAsset The address of the underlying asset of this aToken (E.g. Token0 for aToken0)
      * @param incentivesController The smart contract managing potential incentives distribution
      * @param debtTokenDecimals The decimals of the debtToken, same as the underlying asset's
      * @param debtTokenName The name of the token

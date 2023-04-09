@@ -2,20 +2,17 @@
 pragma solidity >=0.8.0;
 pragma abicoder v2;
 
-import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-
 import "../../libraries/TransferHelper.sol";
-import "../../libraries/TickMath.sol";
+import "../../libraries/uniLibraries/TickMath.sol";
+import "../../libraries/uniLibraries/LiquidityAmounts.sol";
 
-import "../../libraries/AppStorage.sol";
 import "../../libraries/BaseContract.sol";
 
-import "hardhat/console.sol";
+import "../innerInterfaces/UniFacet.sol";
+import "../innerInterfaces/AaveFacet.sol";
 
 contract ChamberV1 is
-    AppStorage,
-    BaseContract,
-    initializable
+    BaseContract
 {
 
     // =================================
@@ -31,7 +28,9 @@ contract ChamberV1 is
         address _aaveOracleAddress,
         address _aaveAUSDCAddress,
         int24 _ticksRange
-    ) external initializer {
+    ) external {
+        require(!getState().unlocked, "Already initialized");
+
         getState().i_uniswapSwapRouter = ISwapRouter(_uniswapSwapRouterAddress);
         getState().i_uniswapPool = IUniswapV3Pool(_uniswapPoolAddress);
         getState().i_aaveV3Pool = IPool(_aaveV3poolAddress);
@@ -39,9 +38,9 @@ contract ChamberV1 is
         getState().i_aaveAUSDCToken = IAToken(_aaveAUSDCAddress);
         getState().i_aaveVToken0 = IVariableDebtToken(_aaveVTOKEN0Address);
         getState().i_aaveVToken1 = IVariableDebtToken(_aaveVTOKEN1Address);
-        getState().i_usdcAddress = i_aaveAUSDCToken.UNDERLYING_ASSET_ADDRESS();
-        getState().i_token0Address = i_aaveVToken0.UNDERLYING_ASSET_ADDRESS();
-        getState().i_token1Address = i_aaveVToken1.UNDERLYING_ASSET_ADDRESS();
+        getState().i_usdcAddress = (getState().i_aaveAUSDCToken).UNDERLYING_ASSET_ADDRESS();
+        getState().i_token0Address = (getState().i_aaveVToken0).UNDERLYING_ASSET_ADDRESS();
+        getState().i_token1Address = (getState().i_aaveVToken1).UNDERLYING_ASSET_ADDRESS();
         getState().unlocked = true;
         getState().s_ticksRange = _ticksRange;
     }
@@ -58,59 +57,39 @@ contract ChamberV1 is
     // =================================
 
     function getAdminBalance() public view returns (uint256, uint256) {
-        return (s_cetraFeeWmatic, s_cetraFeeWeth);
+        return (getState().s_cetraFeeToken1, getState().s_cetraFeeToken0);
     }
 
     function currentUSDBalance() public view returns (uint256) {
         (
-            uint256 wmaticPoolBalance,
-            uint256 wethPoolBalance
+            uint256 token1PoolBalance,
+            uint256 token0PoolBalance
         ) = calculateCurrentPoolReserves();
         (
-            uint256 wmaticFeePending,
-            uint256 wethFeePending
-        ) = calculateCurrentFees();
-        uint256 pureUSDCAmount = getAUSDCTokenBalance() +
-            TransferHelper.safeGetBalance(i_usdcAddress, address(this));
-        uint256 poolTokensValue = ((wethPoolBalance +
-            wethFeePending +
-            TransferHelper.safeGetBalance(i_wethAddress, address(this)) -
-            s_cetraFeeWeth) *
-            getWethOraclePrice() +
-            (wmaticPoolBalance +
-                wmaticFeePending +
-                TransferHelper.safeGetBalance(i_wmaticAddress, address(this)) -
-                s_cetraFeeWmatic) *
-            getWmaticOraclePrice()) /
-            getUsdcOraclePrice() /
+            uint256 token1FeePending,
+            uint256 token0FeePending
+        ) = IUniFacet(address(this)).calculateCurrentFees();
+        uint256 pureUSDCAmount = IAaveFacet(address(this)).getAUSDCTokenBalance() +
+            TransferHelper.safeGetBalance(getState().i_usdcAddress);
+        uint256 poolTokensValue = ((token0PoolBalance +
+            token0FeePending +
+            TransferHelper.safeGetBalance(getState().i_token0Address) -
+            getState().s_cetraFeeToken0) *
+            IAaveFacet(address(this)).getToken0OraclePrice() +
+            (token1PoolBalance +
+                token1FeePending +
+                TransferHelper.safeGetBalance(getState().i_token1Address) -
+                getState().s_cetraFeeToken1) *
+            IAaveFacet(address(this)).getToken1OraclePrice()) /
+            IAaveFacet(address(this)).getUsdcOraclePrice() /
             1e12;
-        uint256 debtTokensValue = (getVWETHTokenBalance() *
-            getWethOraclePrice() +
-            getVWMATICTokenBalance() *
-            getWmaticOraclePrice()) /
-            getUsdcOraclePrice() /
+        uint256 debtTokensValue = (IAaveFacet(address(this)).getVToken0Balance() *
+            IAaveFacet(address(this)).getToken0OraclePrice() +
+            IAaveFacet(address(this)).getVToken1Balance() *
+            IAaveFacet(address(this)).getToken1OraclePrice()) /
+            IAaveFacet(address(this)).getUsdcOraclePrice() /
             1e12;
         return pureUSDCAmount + poolTokensValue - debtTokensValue;
-    }
-
-    function currentLTV() public view returns (uint256) {
-        // return currentETHBorrowed * getWethOraclePrice() / currentUSDInCollateral/getUsdOraclePrice()
-        (
-            uint256 totalCollateralETH,
-            uint256 totalBorrowedETH,
-            ,
-            ,
-            ,
-
-        ) = i_aaveV3Pool.getUserAccountData(address(this));
-        uint256 ltv = totalCollateralETH == 0
-            ? 0
-            : (PRECISION * totalBorrowedETH) / totalCollateralETH;
-        return ltv;
-    }
-
-    function sharesWorth(uint256 shares) public view returns (uint256) {
-        return (currentUSDBalance() * shares) / s_totalShares;
     }
 
     function calculateCurrentPoolReserves()
@@ -118,14 +97,14 @@ contract ChamberV1 is
         view
         returns (uint256, uint256)
     {
-        uint128 liquidity = getLiquidity();
+        uint128 liquidity = IUniFacet(address(this)).getLiquidity();
 
         // compute current holdings from liquidity
         (uint256 amount0Current, uint256 amount1Current) = LiquidityAmounts
             .getAmountsForLiquidity(
-                getSqrtRatioX96(),
-                TickMath.getSqrtRatioAtTick(s_lowerTick),
-                TickMath.getSqrtRatioAtTick(s_upperTick),
+                IUniFacet(address(this)).getSqrtRatioX96(),
+                TickMath.getSqrtRatioAtTick(getState().s_lowerTick),
+                TickMath.getSqrtRatioAtTick(getState().s_upperTick),
                 liquidity
             );
 
@@ -137,10 +116,10 @@ contract ChamberV1 is
     // =================================
 
     function _redeemFees() public onlyOwner {
-        TransferHelper.safeTransfer(i_wmaticAddress, owner(), s_cetraFeeWmatic);
-        TransferHelper.safeTransfer(i_wethAddress, owner(), s_cetraFeeWeth);
-        s_cetraFeeWmatic = 0;
-        s_cetraFeeWeth = 0;
+        TransferHelper.safeTransfer(getState().i_token1Address, msg.sender, getState().s_cetraFeeToken1);
+        TransferHelper.safeTransfer(getState().i_token0Address, msg.sender, getState().s_cetraFeeToken0);
+        getState().s_cetraFeeToken1 = 0;
+        getState().s_cetraFeeToken0 = 0;
     }
 
     function giveApprove(address _token, address _to) public onlyOwner {
@@ -153,9 +132,9 @@ contract ChamberV1 is
         uint256 _maxLTV,
         uint256 _hedgeDev
     ) public onlyOwner {
-        s_targetLTV = _targetLTV;
-        s_minLTV = _minLTV;
-        s_maxLTV = _maxLTV;
-        s_hedgeDev = _hedgeDev;
+        getState().s_targetLTV = _targetLTV;
+        getState().s_minLTV = _minLTV;
+        getState().s_maxLTV = _maxLTV;
+        getState().s_hedgeDev = _hedgeDev;
     }
 }

@@ -2,39 +2,49 @@
 pragma solidity >=0.8.0;
 pragma abicoder v2;
 
-import "./Uniswap/utils/LiquidityAmounts.sol";
-import "./Uniswap/interfaces/ISwapRouter.sol";
-import "./Uniswap/interfaces/IUniswapV3Pool.sol";
-import "./Uniswap/interfaces/callback/IUniswapV3MintCallback.sol";
+import "../../libraries/uniLibraries/LiquidityAmounts.sol";
 
-import "../../libraries/AppStorage.sol";
+import "../../interfaces/UniInterfaces/ISwapRouter.sol";
+import "../../interfaces/UniInterfaces/IUniswapV3Pool.sol";
+import "../../interfaces/UniInterfaces/callback/IUniswapV3MintCallback.sol";
+
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
 contract uniFacet is 
-    AppStorage,
-    BaseContract
+    BaseContract,
+    IUniswapV3MintCallback
 {
 
+    // =================================
+    // Errors
+    // =================================
+
+    error ChamberV1__CallerIsNotUniPool();
+
+    // =================================
+    // Main funcitons
+    // =================================
+
     function getSqrtRatioX96() private view returns (uint160) {
-        (uint160 sqrtRatioX96, , , , , , ) = i_uniswapPool.slot0();
+        (uint160 sqrtRatioX96, , , , , , ) = (getState().i_uniswapPool).slot0();
         return sqrtRatioX96;
     }
 
     function getTick() public view returns (int24) {
-        (, int24 tick, , , , , ) = i_uniswapPool.slot0();
+        (, int24 tick, , , , , ) = (getState().i_uniswapPool).slot0();
         return tick;
     }
 
     function _getPositionID() private view returns (bytes32 positionID) {
         return
             keccak256(
-                abi.encodePacked(address(this), s_lowerTick, s_upperTick)
+                abi.encodePacked(address(this), getState().s_lowerTick, getState().s_upperTick)
             );
     }
 
     function getLiquidity() private view returns (uint128) {
-        (uint128 liquidity, , , , ) = i_uniswapPool.positions(_getPositionID());
+        (uint128 liquidity, , , , ) = (getState().i_uniswapPool).positions(_getPositionID());
         return liquidity;
     }
 
@@ -50,7 +60,7 @@ contract uniFacet is
             uint256 feeGrowthInside1Last,
             uint128 tokensOwed0,
             uint128 tokensOwed1
-        ) = i_uniswapPool.positions(_getPositionID());
+        ) = (getState().i_uniswapPool).positions(_getPositionID());
         fee0 =
             _computeFeesEarned(true, feeGrowthInside0Last, tick, liquidity) +
             uint256(tokensOwed0);
@@ -70,27 +80,27 @@ contract uniFacet is
         uint256 feeGrowthOutsideUpper;
         uint256 feeGrowthGlobal;
         if (isZero) {
-            feeGrowthGlobal = i_uniswapPool.feeGrowthGlobal0X128();
-            (, , feeGrowthOutsideLower, , , , , ) = i_uniswapPool.ticks(
-                s_lowerTick
+            feeGrowthGlobal = (getState().i_uniswapPool).feeGrowthGlobal0X128();
+            (, , feeGrowthOutsideLower, , , , , ) = (getState().i_uniswapPool).ticks(
+                getState().s_lowerTick
             );
-            (, , feeGrowthOutsideUpper, , , , , ) = i_uniswapPool.ticks(
-                s_upperTick
+            (, , feeGrowthOutsideUpper, , , , , ) = (getState().i_uniswapPool).ticks(
+                getState().s_upperTick
             );
         } else {
-            feeGrowthGlobal = i_uniswapPool.feeGrowthGlobal1X128();
-            (, , , feeGrowthOutsideLower, , , , ) = i_uniswapPool.ticks(
-                s_lowerTick
+            feeGrowthGlobal = (getState().i_uniswapPool).feeGrowthGlobal1X128();
+            (, , , feeGrowthOutsideLower, , , , ) = (getState().i_uniswapPool).ticks(
+                getState().s_lowerTick
             );
-            (, , , feeGrowthOutsideUpper, , , , ) = i_uniswapPool.ticks(
-                s_upperTick
+            (, , , feeGrowthOutsideUpper, , , , ) = (getState().i_uniswapPool).ticks(
+                getState().s_upperTick
             );
         }
 
         unchecked {
             // calculate fee growth below
             uint256 feeGrowthBelow;
-            if (tick >= s_lowerTick) {
+            if (tick >= getState().s_lowerTick) {
                 feeGrowthBelow = feeGrowthOutsideLower;
             } else {
                 feeGrowthBelow = feeGrowthGlobal - feeGrowthOutsideLower;
@@ -98,7 +108,7 @@ contract uniFacet is
 
             // calculate fee growth above
             uint256 feeGrowthAbove;
-            if (tick < s_upperTick) {
+            if (tick < getState().s_upperTick) {
                 feeGrowthAbove = feeGrowthOutsideUpper;
             } else {
                 feeGrowthAbove = feeGrowthGlobal - feeGrowthOutsideUpper;
@@ -125,18 +135,12 @@ contract uniFacet is
         uint256 amount1Owed,
         bytes calldata /*_data*/
     ) external override {
-        if (msg.sender != address(i_uniswapPool)) {
+        if (msg.sender != address(getState().i_uniswapPool)) {
             revert ChamberV1__CallerIsNotUniPool();
         }
 
-        if (amount0Owed > 0)
-            TransferHelper.safeTransfer(
-                i_wmaticAddress,
-                msg.sender,
-                amount0Owed
-            );
-        if (amount1Owed > 0)
-            TransferHelper.safeTransfer(i_wethAddress, msg.sender, amount1Owed);
+        if (amount0Owed > 0) TransferHelper.safeTransfer(getState().i_token1Address, msg.sender, amount0Owed);
+        if (amount1Owed > 0) TransferHelper.safeTransfer(getState().i_token0Address, msg.sender, amount1Owed);
     }
 
     receive() external payable {}
