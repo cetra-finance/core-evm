@@ -8,14 +8,14 @@ import "../../libraries/TransferHelper.sol";
 import "../../libraries/uniLibraries/LiquidityAmounts.sol";
 import "../../libraries/uniLibraries/TickMath.sol";
 
-import "../innerInterfaces/RebalanceFacet.sol";
-import "../innerInterfaces/UniFacet.sol";
-import "../innerInterfaces/HelperFacet.sol";
-import "../innerInterfaces/AaveFacet.sol";
+import "../innerInterfaces/IRebalanceFacet.sol";
+import "../innerInterfaces/IUniFacet.sol";
+import "../innerInterfaces/IHelperFacet.sol";
+import "../innerInterfaces/IAaveFacet.sol";
 
 import "../../libraries/Constants.sol";
 
-contract mintFacet is
+contract MintFacet is
     BaseContract
 {
 
@@ -30,7 +30,7 @@ contract mintFacet is
     // =================================
 
     function mint(uint256 usdAmount) external lock {
-        {
+        {   
             uint256 currUsdBalance = IRebalanceFacet(address(this)).currentUSDBalance();
             uint256 sharesToMint = (currUsdBalance > 10)
                 ? ((usdAmount * getState().s_totalShares) / (currUsdBalance))
@@ -54,6 +54,11 @@ contract mintFacet is
     // Intreral logic funcitons
     // =================================
 
+    function mintInternal(uint256 usdAmount) external lock {
+        require(msg.sender == address(this), "ChamberV1__OnlyContract");
+        _mint(usdAmount);
+    }
+
     function _mint(uint256 usdAmount) private {
         uint256 amount0;
         uint256 amount1;
@@ -62,8 +67,8 @@ contract mintFacet is
         int24 currentTick = IUniFacet(address(this)).getTick();
 
         if (!getState().s_liquidityTokenId) {
-            getState().s_lowerTick = ((currentTick - 11000) / 10) * 10;
-            getState().s_upperTick = ((currentTick + 11000) / 10) * 10;
+            getState().s_lowerTick = ((currentTick - getState().s_ticksRange) / getState().i_uniswapPool.tickSpacing()) * getState().i_uniswapPool.tickSpacing();
+            getState().s_upperTick = ((currentTick + getState().s_ticksRange) / getState().i_uniswapPool.tickSpacing()) * getState().i_uniswapPool.tickSpacing();
             usedLTV = getState().s_targetLTV;
             getState().s_liquidityTokenId = true;
         } else {

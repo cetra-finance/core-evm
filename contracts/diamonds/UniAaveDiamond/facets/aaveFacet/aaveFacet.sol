@@ -5,7 +5,7 @@ pragma abicoder v2;
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
-contract aaveFacet is 
+contract AaveFacet is 
     BaseContract
 {
     function getUsdcOraclePrice() public view returns (uint256) {

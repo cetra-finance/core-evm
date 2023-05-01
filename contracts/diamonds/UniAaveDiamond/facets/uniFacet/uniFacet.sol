@@ -11,7 +11,7 @@ import "../../interfaces/UniInterfaces/callback/IUniswapV3MintCallback.sol";
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
-contract uniFacet is 
+contract UniFacet is 
     BaseContract,
     IUniswapV3MintCallback
 {
@@ -26,7 +26,7 @@ contract uniFacet is
     // Main funcitons
     // =================================
 
-    function getSqrtRatioX96() private view returns (uint160) {
+    function getSqrtRatioX96() public view returns (uint160) {
         (uint160 sqrtRatioX96, , , , , , ) = (getState().i_uniswapPool).slot0();
         return sqrtRatioX96;
     }
@@ -36,20 +36,20 @@ contract uniFacet is
         return tick;
     }
 
-    function _getPositionID() private view returns (bytes32 positionID) {
+    function _getPositionID() public view returns (bytes32 positionID) {
         return
             keccak256(
                 abi.encodePacked(address(this), getState().s_lowerTick, getState().s_upperTick)
             );
     }
 
-    function getLiquidity() private view returns (uint128) {
+    function getLiquidity() public view returns (uint128) {
         (uint128 liquidity, , , , ) = (getState().i_uniswapPool).positions(_getPositionID());
         return liquidity;
     }
 
     function calculateCurrentFees()
-        private
+        public
         view
         returns (uint256 fee0, uint256 fee1)
     {

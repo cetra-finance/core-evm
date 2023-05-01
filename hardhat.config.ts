@@ -2,14 +2,15 @@
  * @type import('hardhat/config').HardhatUserConfig
  */
 
-require("@nomiclabs/hardhat-waffle");
-require("@nomiclabs/hardhat-ethers");
-require("@nomiclabs/hardhat-truffle5");
-require("@nomiclabs/hardhat-etherscan");
-require("hardhat-deploy");
-require("@nomicfoundation/hardhat-network-helpers");
-require("hardhat-gas-reporter");
-require("hardhat-contract-sizer");
+import { HardhatUserConfig } from "hardhat/config";
+import "@nomiclabs/hardhat-waffle";
+import "@nomiclabs/hardhat-ethers";
+import "@nomiclabs/hardhat-truffle5";
+import "@nomiclabs/hardhat-etherscan";
+import "hardhat-deploy";
+import "@nomicfoundation/hardhat-network-helpers";
+import "hardhat-gas-reporter";
+import "hardhat-contract-sizer";
 
 require("dotenv").config();
 
@@ -21,10 +22,10 @@ module.exports = {
     defaultNetwork: "hardhat",
     networks: {
         hardhat: {
-            chainId: 42161,
+            chainId: 137,
             forking: {
                 url: CUSTOM_RPC_URL,
-                blockNumber: 74232775,
+                blockNumber: 41875659,
             },
         },
         matic: {

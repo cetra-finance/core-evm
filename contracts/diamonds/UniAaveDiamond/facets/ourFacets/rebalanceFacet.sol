@@ -8,10 +8,12 @@ import "../../libraries/uniLibraries/LiquidityAmounts.sol";
 
 import "../../libraries/BaseContract.sol";
 
-import "../innerInterfaces/UniFacet.sol";
-import "../innerInterfaces/AaveFacet.sol";
+import "../innerInterfaces/IUniFacet.sol";
+import "../innerInterfaces/IAaveFacet.sol";
+import "../innerInterfaces/IMintFacet.sol";
+import "../innerInterfaces/IBurnFacet.sol";
 
-contract ChamberV1 is
+contract RebalanceFacet is
     BaseContract
 {
 
@@ -50,6 +52,9 @@ contract ChamberV1 is
     // =================================
 
     function rebalance() external lock {
+        getState().s_liquidityTokenId = false;
+        IBurnFacet(address(this)).burnInternal(getState().s_totalShares);
+        IMintFacet(address(this)).mintInternal(TransferHelper.safeGetBalance(getState().i_usdcAddress));
     }
 
     // =================================

@@ -5,13 +5,13 @@ pragma abicoder v2;
 import "../../libraries/BaseContract.sol";
 import "../../libraries/TransferHelper.sol";
 
-import "../innerInterfaces/UniFacet.sol";
-import "../innerInterfaces/AaveFacet.sol";
-import "../innerInterfaces/HelperFacet.sol";
+import "../innerInterfaces/IUniFacet.sol";
+import "../innerInterfaces/IAaveFacet.sol";
+import "../innerInterfaces/IHelperFacet.sol";
 
 import "../../libraries/Constants.sol";
 
-contract burnFacet is
+contract BurnFacet is
     BaseContract
 {
 
@@ -48,6 +48,11 @@ contract burnFacet is
     // =================================
     // Intreral logic funcitons
     // =================================
+
+    function burnInternal(uint256 _shares) public {
+        require(msg.sender == address(this), "ChamberV1__OnlyContract");
+        _burn(_shares);
+    }
 
     function _burn(uint256 _shares) private {
         (

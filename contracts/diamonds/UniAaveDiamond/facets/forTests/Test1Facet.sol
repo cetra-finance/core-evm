@@ -22,9 +22,7 @@ contract Test1Facet {
 
     function test1Func9() external {}
 
-    function test1Func10() external pure returns (uint256) {
-        return 123456;
-    }
+    function test1Func10() external {}
 
     function test1Func11() external {}
 

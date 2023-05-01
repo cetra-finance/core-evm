@@ -27,4 +27,16 @@ contract HelperFacet is
         return ltv;
     }
 
+    // =================================
+    // View funcitons
+    // =================================
+
+    function getUserShares(address user) public view returns (uint256) {
+        return getState().s_userShares[user];
+    }
+
+    function getTotalShares() public view returns (uint256) {
+        return getState().s_totalShares;
+    }
+
 }

@@ -1,11 +1,11 @@
 /* global ethers */
 /* eslint prefer-const: "off" */
 
-const { getSelectors, FacetCutAction } = require('./libraries/diamond.ts')
+import { ethers } from "hardhat";
+import { getSelectors, FacetCutAction } from './libraries/diamond';
 
-async function deployDiamond () {
-  const accounts = await ethers.getSigners()
-  const contractOwner = accounts[0]
+export async function deployDiamond () {
+  const [contractOwner] = await ethers.getSigners()
 
   console.log("----------------------")
 
@@ -39,7 +39,13 @@ async function deployDiamond () {
     'DiamondLoupeFacet',
     'OwnershipFacet',
     // 'PausableFacet',
-    'TokenFacet'
+    // 'TokenFacet',
+    'BurnFacet',
+    'MintFacet',
+    'RebalanceFacet',
+    'UniFacet',
+    'AaveFacet',
+    'HelperFacet'
   ]
   const cut = []
   for (const FacetName of FacetNames) {
@@ -85,4 +91,4 @@ if (require.main === module) {
     })
 }
 
-exports.deployDiamond = deployDiamond
+exports.deployDiamond = deployDiamond;
