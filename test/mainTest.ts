@@ -204,16 +204,15 @@ describe("DiamondTest", async function () {
     });
 
     it("Makes deposit", async () => {
-      await mintFacet.connect(user).mint(1000 * 1e6);
+        await mintFacet.connect(user).mint(1000 * 1e6);
     });
 
     it("Makes rebalance", async () => {
-      // await mintFacet.connect(user).mint(1000 * 1e6);
-  });
+        // await mintFacet.connect(user).mint(1000 * 1e6);
+    });
 
     it("Makes burn", async () => {
-      let shares = await helperFacet.getUserShares(user.address);
-      await burnFacet.connect(user).burn(shares);
-    })
-
+        let shares = await helperFacet.getUserShares(user.address);
+        await burnFacet.connect(user).burn(shares);
+    });
 });
